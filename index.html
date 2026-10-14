@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>課堂積分教室</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand"><div class="logo">🏫</div><select class="cls" id="classSel" aria-label="選擇班級"></select></div>
+  <div class="tools">
+    <button class="btn" id="allPresentBtn">✅ 全部到齊</button>
+    <button class="btn" id="luckyBtn">🎲 抽籤</button>
+    <button class="btn" id="viewBtn">🔄 切換視角</button>
+    <button class="btn" id="editBtn">✏️ 編輯</button>
+    <button class="btn" id="importBtn">📷 匯入座位表</button>
+    <button class="btn" id="muteBtn">🔊</button>
+    <button class="btn" id="cloudBtn" title="Google Sheet 雲端設定">⚙️</button>
+  </div>
+  <div class="stats">
+    <div class="stat"><b id="sAtt">0/0</b><span>出席</span></div>
+    <div class="stat plus"><b id="sPlus">+0</b><span>總加分</span></div>
+    <div class="stat minus"><b id="sMinus">-0</b><span>總扣分</span></div>
+    <div class="stat"><b id="sTime">00:00</b><span>課堂時間</span></div>
+  </div>
+  <button class="btn" id="exportBtn">⬇ CSV</button>
+  <button class="btn primary" id="syncBtn">☁️ 下課上傳</button>
+</header>
+
+<main class="layout">
+  <section>
+    <div class="room" id="room">
+      <div class="front">
+        <div class="podium">講 台</div>
+        <div class="board"><div class="t1" id="boardTitle"></div><div class="t2" id="boardStar"></div></div>
+      </div>
+      <div class="floor"><div class="grid" id="grid"></div></div>
+    </div>
+    <p class="hint">
+      點座位選學生 → 按加分／扣分或理由標籤。快捷鍵：<kbd>+</kbd> 加分　<kbd>-</kbd> 扣分　<kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 切換 1/2/5 分
+      <kbd>方向鍵</kbd> 移動　<kbd>A</kbd> 到課　<kbd>X</kbd> 缺席　<kbd>Ctrl</kbd>+<kbd>Z</kbd> 復原　<kbd>Esc</kbd> 取消選擇。
+      分數自動存在這台電腦的瀏覽器裡，下課記得匯出 CSV。
+    </p>
+  </section>
+
+  <aside class="side">
+    <div class="card action" id="action"></div>
+    <div class="card"><h3>🏆 排行榜</h3><ol class="lb" id="lb"></ol></div>
+    <div class="card">
+      <h3>📜 紀錄 <button class="btn" id="undoBtn" style="padding:3px 10px;font-size:12px">↶ 復原</button></h3>
+      <ul class="log" id="log"></ul>
+    </div>
+    <div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn" id="classPlusBtn">🎉 全班 +1</button>
+      <button class="btn" id="resetBtn">🧹 新課堂（清空分數）</button>
+    </div>
+  </aside>
+</main>
+
+<div class="modal" id="importModal">
+  <div class="dialog">
+    <h2>📷 匯入新班級座位表</h2>
+    <p><b>自動辨識（推薦）</b>：把座位表照片（.HEIC / .jpg）放進 <code>images/</code> 資料夾，檔名就是班級名稱（例如 <code>907.HEIC</code>），然後在終端機執行：</p>
+    <p><code>python3 import_seating.py</code>　完成後重新整理此頁，上方選單就會出現新班級。</p>
+    <p style="margin-top:14px"><b>手動貼上</b>：每一行是一排（第一行 = 紙上最上面那排，講台在下方），格子用 Tab 或逗號分隔，每格填「座號 姓名 職稱」。可以直接從 Excel 複製。會覆蓋<b>目前這個班級</b>的座位。</p>
+    <textarea id="importText"></textarea>
+    <div class="row">
+      <button class="btn" id="restoreBtn">還原成照片辨識的名單</button>
+      <button class="btn" data-close>取消</button>
+      <button class="btn primary" id="importApply">套用</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="luckyModal">
+  <div class="dialog" style="width:min(420px,100%);text-align:center">
+    <h2>🎲 幸運抽籤</h2>
+    <div class="lottery" id="lotteryName">…</div>
+    <div class="row" style="justify-content:center">
+      <button class="btn" id="luckyAgain">再抽一次</button>
+      <button class="btn primary" id="luckyPick">選這位同學</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="cloudModal">
+  <div class="dialog">
+    <h2>⚙️ Google Sheet 雲端設定</h2>
+    <p>按「☁️ 下課上傳」時，會把這堂課每位同學的淨分寫進試算表：每個班級一個分頁，每次上課新增一欄日期。</p>
+    <p><b>第一次設定</b>（約 3 分鐘）：</p>
+    <p>1. 打開要存成績的 Google 試算表 → 上方選單「擴充功能」→「Apps Script」<br>
+       2. 把專案裡 <code>google-apps-script/Code.gs</code> 的內容整個貼上，並把 <code>TOKEN</code> 改成自己的密碼 → 存檔<br>
+       3. 右上角「部署」→「新增部署作業」→ 齒輪選「網頁應用程式」；執行身分「我」、存取權「所有人」→ 部署並授權<br>
+       4. 把「網頁應用程式網址」和密碼貼在下面</p>
+    <label class="field">網頁應用程式網址<input id="cloudUrl" placeholder="https://script.google.com/macros/s/…/exec"></label>
+    <label class="field">密碼（TOKEN）<input id="cloudToken" type="password" placeholder="跟 Code.gs 裡的 TOKEN 一樣"></label>
+    <div class="row">
+      <button class="btn" id="cloudTest">🔌 測試連線</button>
+      <button class="btn" data-close>取消</button>
+      <button class="btn primary" id="cloudSave">儲存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="rosters.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
