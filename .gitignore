@@ -7,9 +7,6 @@ service-account*.json
 # 座位表原始照片
 images/
 
-# 貼到 Google 試算表用的 Apps Script（不在本機執行）
-google-apps-script/
-
 __pycache__/
 *.pyc
 .venv/
