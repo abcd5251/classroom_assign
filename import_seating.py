@@ -6,10 +6,11 @@
   python3 import_seating.py --force    # 全部照片重新辨識（會覆蓋手動修改過的 json）
   python3 import_seating.py --rebuild  # 不辨識，只把 rosters/*.json 重新打包
 
-辨識照片需要 Claude API 金鑰：export ANTHROPIC_API_KEY=sk-ant-...
+辨識照片需要 Claude API 金鑰：寫在 .env 的 ANTHROPIC_API_KEY=sk-ant-...
 """
 import base64
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -52,6 +53,17 @@ PROMPT = """這是一張台灣國中教室的座位表照片，講台通常畫�
 照片可能歪斜，請依表格線判斷每格屬於哪一排哪一列。
 整排都是空白的格子不要算進 rows；中間零星的空位保留位置但不要輸出。
 姓名請逐字仔細辨識罕見字，不要猜成常見字。"""
+
+
+def load_env():
+    f = ROOT / ".env"
+    if not f.exists():
+        return
+    for line in f.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip("'\""))
 
 
 def to_jpeg(path: Path) -> bytes:
@@ -117,6 +129,7 @@ def rebuild():
 
 def main():
     args = set(sys.argv[1:])
+    load_env()
     ROSTERS.mkdir(exist_ok=True)
     if "--rebuild" not in args:
         photos = sorted(p for p in IMAGES.glob("*") if p.suffix.lower() in EXTS)
@@ -129,7 +142,7 @@ def main():
                 try:
                     d = extract(client, p)
                 except (anthropic.AuthenticationError, TypeError):
-                    print("  ❌ 沒有可用的 Claude API 金鑰，請先執行：export ANTHROPIC_API_KEY=sk-ant-...")
+                    print("  ❌ 沒有可用的 Claude API 金鑰，請在 .env 加上 ANTHROPIC_API_KEY=sk-ant-...")
                     break
                 except (anthropic.APIError, RuntimeError, json.JSONDecodeError) as e:
                     print(f"  ❌ {p.name} 失敗：{e}")

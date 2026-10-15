@@ -4,9 +4,14 @@
 
 ## 快速開始
 
-**雙擊 `start.command`** — 會先匯入新的座位表照片，再用瀏覽器打開頁面。
+```bash
+pip3 install -r requirements.txt   # 第一次
+./start.command                    # 或在 Finder 雙擊
+```
 
-或直接用瀏覽器打開 `index.html`（不需要架伺服器、不需要網路）。
+會先匯入新的座位表照片，再啟動本機伺服器並打開 http://127.0.0.1:8000 。**上課期間不要關掉那個終端機視窗**，下課後關掉視窗或按 `Ctrl + C` 就停止了。
+
+只想看畫面、不需要上傳 Google Sheet 的話，也可以直接打開 `index.html`。（兩種開法的分數各存一份，請固定用同一種）
 
 ## 新增一個班級
 
@@ -14,11 +19,10 @@
 2. 雙擊 `start.command`（或在終端機執行 `python3 import_seating.py`）
 3. 頁面左上角的選單就會出現新班級
 
-第一次使用自動辨識前，需要：
+第一次使用自動辨識前，在 `.env` 加上 Claude API 金鑰（格式見 `.env.example`）：
 
-```bash
-pip3 install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...     # 建議寫進 ~/.zshrc
+```
+ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 照片辨識只會跑一次（已經有 `rosters/<班級>.json` 的不會重跑），每張照片會產生一點 API 費用。
@@ -62,24 +66,34 @@ CSV 欄位：班級、座號、姓名、職稱、座位、出席狀態、加分�
 - 同一堂課重複上傳只會**更新**，不會重複加分；同一天上兩堂會相加
 - 隱藏分頁 `_上課紀錄` 保存每次上傳的原始資料
 
-### 第一次設定（約 3 分鐘）
+### 第一次設定：服務帳戶（約 5 分鐘）
 
-> Google Cloud 的「API 金鑰」不能寫入試算表，所以改用 Apps Script，不需要金鑰。
+服務帳戶就像一個「機器人帳號」，把它加進試算表的共用名單，程式就能寫入。
 
-1. 打開要存成績的 Google 試算表 → 選單「擴充功能」→「Apps Script」
-2. 把 `google-apps-script/Code.gs` 整個貼上，把第一行的 `TOKEN` 改成自己的密碼 → 💾 存檔
-3. 右上角「部署」→「新增部署作業」→ 齒輪選「**網頁應用程式**」
-   - 執行身分：**我**　／　誰可以存取：**所有人** → 部署 → 依指示授權
-4. 複製「網頁應用程式網址」（`https://script.google.com/macros/s/…/exec`）
-5. 在課堂積分教室按「⚙️」，貼上網址和密碼 → 「🔌 測試連線」→ 儲存
+1. 到 [Google Cloud Console](https://console.cloud.google.com/) → 選你的專案 →「API 和服務」→「程式庫」→ 啟用 **Google Sheets API**
+2. 「IAM 與管理」→「服務帳戶」→「建立服務帳戶」（名稱隨意，角色可以略過）
+3. 點進剛建立的服務帳戶 →「金鑰」→「新增金鑰」→「JSON」→ 會下載一個 `.json` 檔
+4. 把它改名成 `service-account.json`，放進專案資料夾（已在 `.gitignore`，不會被 commit）
+5. 打開要存成績的 Google 試算表 →「共用」→ 貼上服務帳戶的 email（`xxx@xxx.iam.gserviceaccount.com`，在 json 裡的 `client_email`）→ 權限選「**編輯者**」
+6. 在 `.env` 加上試算表網址：
 
-之後如果修改了 `Code.gs`，要到「部署」→「管理部署作業」→ ✏️ → 版本選「新版本」再部署，網址不變。
+   ```
+   GOOGLE_SHEET_ID=https://docs.google.com/spreadsheets/d/xxxxxxxx/edit
+   GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json
+   ```
+
+7. 用 `./start.command` 打開頁面，按「⚙️」測試連線
+
+> 原本的 Google Sheets「API 金鑰」（`GOOGLE_SHEETS_API`）只能讀不能寫，用不到，建議到 Cloud Console 刪掉。
+>
+> 不想跑伺服器的話，也可以改用 Apps Script（`google-apps-script/Code.gs`），直接打開 `index.html` 後按「⚙️」設定。
 
 ## 專案結構
 
 ```
 classroom_assign/
-├── start.command        # 雙擊啟動
+├── start.command        # 雙擊啟動（匯入照片 + 開伺服器）
+├── server.py            # 本機伺服器：提供網頁 + 寫入 Google Sheet
 ├── index.html           # 頁面骨架
 ├── assets/
 │   ├── style.css        # 外觀
@@ -88,12 +102,12 @@ classroom_assign/
 ├── rosters/             # 每班一個 json（辨識結果，可手動修改）※ 不進 git
 ├── rosters.js           # 自動產生，頁面讀的就是它；請勿手改 ※ 不進 git
 ├── import_seating.py    # 照片 → json → rosters.js
-├── google-apps-script/
-│   └── Code.gs          # 貼到 Google 試算表的 Apps Script（寫入成績）
+├── .env                 # 金鑰與試算表網址（範本：.env.example）※ 不進 git
+├── service-account.json # Google 服務帳戶金鑰 ※ 不進 git
 └── requirements.txt
 ```
 
-> `images/`、`rosters/`、`rosters.js`、`.env` 含學生個資或金鑰，已列在 `.gitignore`，只存在本機。換電腦時請另外複製，或重新放照片執行 `import_seating.py`。
+> `images/`、`rosters/`、`rosters.js`、`.env`、`service-account.json` 含學生個資或金鑰，已列在 `.gitignore`，只存在本機。換電腦時請另外複製，或重新放照片執行 `import_seating.py`。
 
 ### 座位座標規則
 

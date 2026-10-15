@@ -1,6 +1,8 @@
 # 機密設定（API 金鑰等）
 .env
 .env.*
+!.env.example
+service-account*.json
 
 # 座位表原始照片
 images/
