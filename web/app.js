@@ -1,4 +1,4 @@
-const CLASSES = window.CLASSES || [];
+let CLASSES = [];   // 由伺服器 /api/classes 提供（rosters/*.json）
 const store = {
   get(k){ try{ return JSON.parse(localStorage.getItem(k)); }catch(e){ return null; } },
   set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} },
@@ -319,26 +319,17 @@ function exportCSV(){
 }
 
 /* ---------- 上傳到 Google Sheet ---------- */
-const cloud = () => store.get("classroom:cloud") || {};
-const LOCAL = location.protocol.startsWith("http");   // 用 server.py 開啟時，由本機伺服器以服務帳戶寫入，不需要 Apps Script
 const eventsSig = () => state.events.length + ":" + (state.events.at(-1)?.t || 0);
 const sessionDate = () => { const d = new Date(state.startedAt); return { md: `${d.getMonth()+1}/${d.getDate()}`, iso: `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}` }; };
 
 async function post(body){
-  let res;
-  if (LOCAL) res = await fetch("/api/" + body.action, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  else {
-    const { url, token } = cloud();
-    // 用 text/plain 送出，瀏覽器不會先發 CORS 預檢，Apps Script 才收得到
-    res = await fetch(url, { method: "POST", body: JSON.stringify({ token, ...body }) });
-  }
-  const data = await res.json().catch(() => ({ ok: false, error: "伺服器沒有回應，請用 start.command 或 python3 server.py 開啟" }));
+  const res = await fetch("/api/" + body.action, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({ ok: false, error: "伺服器沒有回應，請確認終端機的 python3 main.py 還開著" }));
   if (!data.ok) throw new Error(data.error || "上傳失敗");
   return data;
 }
 
 async function syncSheet(){
-  if (!LOCAL && !cloud().url) return openCloud();
   const R = compute();
   const students = [...state.seats].sort((a,b) => a.no - b.no).map(s => {
     const x = R[s.no];
@@ -359,36 +350,16 @@ async function syncSheet(){
       selected = null; save();
     }
   }catch(e){
-    alert("上傳失敗：" + e.message + "\n\n" + (LOCAL ? "請看終端機視窗的錯誤訊息。" : "請檢查網路，或到「⚙️」確認網址和密碼。") + "分數仍保存在這台電腦，可以稍後再上傳。");
+    alert("上傳失敗：" + e.message + "\n\n請看終端機視窗的錯誤訊息。分數仍保存在這台電腦，可以稍後再上傳。");
   }finally{
     btn.disabled = false; refresh();
   }
 }
 
-function openCloud(){
-  const c = cloud();
-  $("cloudUrl").value = c.url || ""; $("cloudToken").value = c.token || "";
-  $("cloudModal").classList.add("open");
-}
-function readCloudForm(){
-  const url = $("cloudUrl").value.trim(), token = $("cloudToken").value;
-  if (!/^https:\/\/script\.google(usercontent)?\.com\/.+/.test(url)) { alert("網址應該是 https://script.google.com/macros/s/…/exec"); return null; }
-  return { url, token };
-}
-$("cloudBtn").onclick = LOCAL ? async () => {
+$("syncBtn").onclick = syncSheet;
+$("cloudBtn").onclick = async () => {
   try{ toast("✅ " + (await post({ action: "ping" })).message); }
   catch(e){ alert("連線失敗：" + e.message); }
-} : openCloud;
-$("syncBtn").onclick = syncSheet;
-$("cloudSave").onclick = () => {
-  const c = readCloudForm(); if (!c) return;
-  store.set("classroom:cloud", c); $("cloudModal").classList.remove("open"); toast("已儲存雲端設定");
-};
-$("cloudTest").onclick = async () => {
-  const c = readCloudForm(); if (!c) return;
-  const prev = cloud(); store.set("classroom:cloud", c);
-  try{ toast("✅ " + (await post({ action: "ping" })).message); }
-  catch(e){ store.set("classroom:cloud", prev); alert("連線失敗：" + e.message); }
 };
 
 /* ---------- 綁定 ---------- */
@@ -400,7 +371,6 @@ $("action").addEventListener("click", e => {
   else if (b.dataset.st) setStatus(selected, b.dataset.st);
 });
 $("lb").addEventListener("click", e => { const li = e.target.closest("li[data-no]"); if (li) select(+li.dataset.no); });
-$("classSel").innerHTML = CLASSES.map(c => `<option value="${esc(c.id)}">${esc(c.className)} 班</option>`).join("");
 $("classSel").onchange = e => loadClass(e.target.value);
 $("viewBtn").onclick = () => { state.view = state.view === "back" ? "chart" : "back"; save(); renderRoom(); };
 $("editBtn").onclick = () => { editMode = !editMode; selected = null; renderRoom(); toast(editMode ? "編輯模式：點座位修改座號／姓名／職稱" : "已離開編輯模式"); };
@@ -471,11 +441,15 @@ setInterval(() => {
   $("sTime").textContent = s >= 3600 ? `${Math.floor(s/3600)}:${pad(Math.floor(s/60)%60)}` : `${pad(Math.floor(s/60))}:${pad(s%60)}`;
 }, 1000);
 
-if (!CLASSES.length){
-  document.querySelector("main").innerHTML = `<div class="card" style="margin:40px auto;max-width:520px;text-align:center">
-    <h3 style="justify-content:center">還沒有任何班級 📷</h3><p>把座位表照片放進 <code>images/</code>，再執行 <code>python3 import_seating.py</code>。</p></div>`;
-} else {
+(async function init(){
+  try{ CLASSES = await (await fetch("/api/classes")).json(); }
+  catch(e){ CLASSES = []; }
+  $("classSel").innerHTML = CLASSES.map(c => `<option value="${esc(c.id)}">${esc(c.className)} 班</option>`).join("");
+  if (!CLASSES.length){
+    document.querySelector("main").innerHTML = `<div class="card" style="margin:40px auto;max-width:520px;text-align:center">
+      <h3 style="justify-content:center">還沒有任何班級 📷</h3><p>把座位表照片放進 <code>images/</code>，再執行 <code>python3 main.py import</code>。</p></div>`;
+    return;
+  }
   const last = store.get("classroom:last");
-  $("classSel").value = CLASSES.some(c => c.id === last) ? last : CLASSES[0].id;
-  loadClass($("classSel").value);
-}
+  loadClass(CLASSES.some(c => c.id === last) ? last : CLASSES[0].id);
+})();

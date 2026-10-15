@@ -1,42 +1,66 @@
 # 🏫 課堂積分教室
 
-上課用的點名＋加扣分小遊戲。拍一張班級座位表，就會自動變成可以點的教室，下課匯出 CSV。
+上課用的點名＋加扣分小遊戲。拍一張班級座位表就會變成可以點的教室，下課一鍵寫進 Google Sheet。
 
-## 快速開始
+## 啟動
+
+第一次（建立虛擬環境並安裝套件）：
 
 ```bash
-pip3 install -r requirements.txt   # 第一次
-./start.command                    # 或在 Finder 雙擊
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-會先匯入新的座位表照片，再啟動本機伺服器並打開 http://127.0.0.1:8000 。**上課期間不要關掉那個終端機視窗**，下課後關掉視窗或按 `Ctrl + C` 就停止了。
+之後每次：
 
-只想看畫面、不需要上傳 Google Sheet 的話，也可以直接打開 `index.html`。（兩種開法的分數各存一份，請固定用同一種）
+```bash
+source venv/bin/activate
+python3 main.py
+```
+
+啟動後終端機會顯示狀態，瀏覽器會自動打開 http://127.0.0.1:8000 ：
+
+```
+🏫 課堂積分教室
+   網址          http://127.0.0.1:8000/
+   班級          906（30 人）、913（30 人）
+   Google Sheet  ✅ xxx@xxx.iam.gserviceaccount.com
+   照片辨識      ✅ 已設定
+
+   上課期間請不要關閉這個視窗；按 Ctrl+C 停止。
+```
+
+**上課期間不要關掉這個終端機視窗**，下課後按 `Ctrl + C` 停止。
+
+| 指令 | 作用 |
+|---|---|
+| `python3 main.py` | 辨識新照片 → 啟動網頁 |
+| `python3 main.py --port 8080` | 換 port 啟動 |
+| `python3 main.py --no-open` | 啟動但不自動開瀏覽器 |
+| `python3 main.py import` | 只辨識 `images/` 裡的新照片 |
+| `python3 main.py import --force` | 全部照片重新辨識（會覆蓋手動改過的 json） |
+| `python3 main.py check` | 檢查設定（班級、Google Sheet、API 金鑰） |
+
+## 設定 `.env`
+
+複製 `.env.example` 成 `.env`：
+
+```
+ANTHROPIC_API_KEY=sk-ant-...                       # 照片辨識用，只有新增班級需要
+GOOGLE_SHEET_ID=https://docs.google.com/spreadsheets/d/xxxxxxxx/edit
+GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json
+```
 
 ## 新增一個班級
 
 1. 把座位表照片放進 `images/`，**檔名 = 班級名稱**（例如 `907.HEIC`、`801.jpg`）
-2. 雙擊 `start.command`（或在終端機執行 `python3 import_seating.py`）
-3. 頁面左上角的選單就會出現新班級
+2. 執行 `python3 main.py`（或 `python3 main.py import`）
+3. 重新整理網頁，左上角選單就會出現新班級
 
-第一次使用自動辨識前，在 `.env` 加上 Claude API 金鑰（格式見 `.env.example`）：
+照片只會辨識一次（已經有 `rosters/<班級>.json` 的不會重跑），每張照片會產生一點 API 費用。
 
-```
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-照片辨識只會跑一次（已經有 `rosters/<班級>.json` 的不會重跑），每張照片會產生一點 API 費用。
-
-### 辨識錯字怎麼辦
-
-- **單一座位**：頁面上按「✏️ 編輯」→ 點該座位修改（只存在這台電腦的瀏覽器）
-- **永久修正**：直接改 `rosters/<班級>.json`，再執行 `python3 import_seating.py --rebuild`
-
-| 指令 | 作用 |
-|---|---|
-| `python3 import_seating.py` | 辨識新照片 + 重新打包 |
-| `python3 import_seating.py --rebuild` | 只把 `rosters/*.json` 重新打包（改完 json 後用） |
-| `python3 import_seating.py --force` | 所有照片重新辨識（會覆蓋手動改過的 json） |
+**辨識錯字**：直接改 `rosters/<班級>.json`，重新整理網頁就生效。臨時修改也可以在網頁上按「✏️ 編輯」（只存在這台電腦的瀏覽器）。
 
 ## 上課操作
 
@@ -46,15 +70,15 @@ ANTHROPIC_API_KEY=sk-ant-...
 | 加分／扣分 | 點學生 → 大按鈕或理由標籤；`1` `2` `3` 切換 1/2/5 分；鍵盤 `+` `-` |
 | 抽人回答 | 「🎲 抽籤」 |
 | 按錯了 | 「↶ 復原」或 `Ctrl/⌘ + Z` |
-| 下課 | 「⬇ 匯出 CSV」→ 「🧹 新課堂」清空分數 |
+| 下課 | 「☁️ 下課上傳」寫進 Google Sheet（也可以「⬇ CSV」匯出）→ 上傳後可選擇開始新課堂 |
 
-分數會自動存在**這台電腦的瀏覽器**裡（重新整理不會不見），但換電腦或清除瀏覽器資料就會消失，記得匯出 CSV。
+分數會自動存在**這台電腦的瀏覽器**裡（重新整理不會不見），但換電腦或清除瀏覽器資料就會消失，記得下課上傳。
 
 CSV 欄位：班級、座號、姓名、職稱、座位、出席狀態、加分次數／總計、扣分次數／總計、淨分、加分明細、扣分明細（Excel 直接開不會亂碼）。
 
-## ☁️ 下課自動寫進 Google Sheet
+## ☁️ 下課寫進 Google Sheet
 
-按右上角「☁️ 下課上傳」，就會把這堂課每位同學的淨分（加分 − 扣分）寫進試算表：
+按「☁️ 下課上傳」，就會把這堂課每位同學的淨分（加分 − 扣分）寫進試算表：
 
 | 座號 | 姓名 | 10/13 | 10/20 | … |
 |---|---|---|---|---|
@@ -82,32 +106,30 @@ CSV 欄位：班級、座號、姓名、職稱、座位、出席狀態、加分�
    GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json
    ```
 
-7. 用 `./start.command` 打開頁面，按「⚙️」測試連線
-
-> 原本的 Google Sheets「API 金鑰」（`GOOGLE_SHEETS_API`）只能讀不能寫，用不到，建議到 Cloud Console 刪掉。
->
-> 不想跑伺服器的話，也可以改用 Apps Script（`google-apps-script/Code.gs`），直接打開 `index.html` 後按「⚙️」設定。
+7. 執行 `python3 main.py check` 確認，啟動後在網頁按「⚙️」測試連線
 
 ## 專案結構
 
 ```
 classroom_assign/
-├── start.command        # 雙擊啟動（匯入照片 + 開伺服器）
-├── server.py            # 本機伺服器：提供網頁 + 寫入 Google Sheet
-├── index.html           # 頁面骨架
-├── assets/
-│   ├── style.css        # 外觀
-│   └── app.js           # 互動邏輯（點名、加扣分、抽籤、匯出）
-├── images/              # ← 放座位表照片
-├── rosters/             # 每班一個 json（辨識結果，可手動修改）※ 不進 git
-├── rosters.js           # 自動產生，頁面讀的就是它；請勿手改 ※ 不進 git
-├── import_seating.py    # 照片 → json → rosters.js
-├── .env                 # 金鑰與試算表網址（範本：.env.example）※ 不進 git
-├── service-account.json # Google 服務帳戶金鑰 ※ 不進 git
-└── requirements.txt
+├── main.py              # 唯一入口：python3 main.py
+├── classroom/           # 後端（Python）
+│   ├── config.py        # 路徑、讀取 .env
+│   ├── rosters.py       # 讀寫 rosters/*.json
+│   ├── seating.py       # 座位表照片 → json（Claude 辨識）
+│   ├── sheets.py        # 寫入 Google Sheet
+│   └── server.py        # 本機網頁伺服器與 API
+├── web/                 # 前端（瀏覽器看到的頁面）
+│   ├── index.html
+│   ├── style.css
+│   └── app.js           # 點名、加扣分、抽籤、匯出、上傳
+├── images/              # ← 放座位表照片          ※ 不進 git
+├── rosters/             # 每班一個 json（可手動修改）※ 不進 git
+├── .env                 # 金鑰與試算表網址         ※ 不進 git
+└── service-account.json # Google 服務帳戶金鑰      ※ 不進 git
 ```
 
-> `images/`、`rosters/`、`rosters.js`、`.env`、`service-account.json` 含學生個資或金鑰，已列在 `.gitignore`，只存在本機。換電腦時請另外複製，或重新放照片執行 `import_seating.py`。
+伺服器只接受這台電腦（127.0.0.1）連線，而且只提供 `web/` 裡的檔案，`.env`、金鑰和名單 json 不會被網頁讀到。
 
 ### 座位座標規則
 
@@ -121,4 +143,4 @@ classroom_assign/
 
 ### 想改加扣分理由
 
-編輯 `assets/app.js` 最上面的 `PLUS_REASONS` / `MINUS_REASONS`。
+編輯 `web/app.js` 最上面的 `PLUS_REASONS` / `MINUS_REASONS`，重新整理網頁即可。

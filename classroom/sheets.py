@@ -1,25 +1,8 @@
-#!/usr/bin/env python3
-"""本機伺服器：打開課堂積分教室網頁，並用 Google 服務帳戶把分數寫進 Google Sheet。
-
-用法：python3 server.py（或雙擊 start.command）；關掉視窗或按 Ctrl+C 就會停止。
-
-.env 需要：
-  GOOGLE_SHEET_ID=試算表網址（或 ID）
-  GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json
-"""
+"""用 Google 服務帳戶把每堂課的淨分寫進試算表：每班一個分頁，每次上課一欄日期。"""
 import json
-import os
-import sys
-import traceback
-import webbrowser
 from datetime import datetime
-from http.server import HTTPServer, SimpleHTTPRequestHandler
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-PORT = int(os.environ.get("PORT", 8000))
-URL = f"http://127.0.0.1:{PORT}/"
-PUBLIC = ("/", "/index.html", "/rosters.js", "/assets/")   # 只開放網頁需要的檔案，.env 和金鑰不會被讀到
+from .config import ROOT, env
 
 LOG_SHEET = "_上課紀錄"
 LOG_HEAD = ["上傳時間", "班級", "日期", "課堂ID", "座號", "姓名", "職稱", "出席", "加分", "扣分", "淨分", "加分明細", "扣分明細"]
@@ -32,17 +15,6 @@ class UserError(Exception):
     """要直接顯示給老師看的錯誤訊息。"""
 
 
-def load_env():
-    f = ROOT / ".env"
-    if not f.exists():
-        return
-    for line in f.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k.strip(), v.strip().strip("'\""))
-
-
 _book = None
 
 
@@ -52,8 +24,8 @@ def book():
     if _book:
         return _book
     import gspread
-    key = ROOT / os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE", "service-account.json")
-    sheet = os.environ.get("GOOGLE_SHEET_ID", "").strip()
+    key = ROOT / (env("GOOGLE_SERVICE_ACCOUNT_FILE") or "service-account.json")
+    sheet = env("GOOGLE_SHEET_ID")
     if not key.exists():
         raise UserError(f"找不到服務帳戶金鑰 {key.name}，請照 README 下載後放進專案資料夾")
     if not sheet:
@@ -163,12 +135,12 @@ def rebuild_day(sh, cls, date, roster, log_rows):
     return len(sums)
 
 
-def api_ping(_):
+def ping():
     sh = book()
     return {"ok": True, "message": f"連線成功：{sh.title}"}
 
 
-def api_sync(p):
+def sync(p):
     sh = book()
     cls, date = str(p["className"]), str(p["date"])
     log_rows = write_log(sh, p)
@@ -176,64 +148,15 @@ def api_sync(p):
     return {"ok": True, "sheet": cls, "date": date, "count": count, "url": f"{sh.url}#gid={sh.worksheet(cls).id}"}
 
 
-API = {"/api/ping": api_ping, "/api/sync": api_sync}
-
-
-class Handler(SimpleHTTPRequestHandler):
-    def __init__(self, *a, **k):
-        super().__init__(*a, directory=str(ROOT), **k)
-
-    def do_GET(self):
-        path = self.path.split("?")[0]
-        if not (path in PUBLIC[:3] or path.startswith(PUBLIC[3])) or ".." in path:
-            return self.send_error(404)
-        super().do_GET()
-
-    def do_POST(self):
-        origin = self.headers.get("Origin")
-        if origin and origin not in (URL.rstrip("/"), f"http://localhost:{PORT}"):
-            return self.send_error(403)
-        fn = API.get(self.path)
-        if not fn:
-            return self.send_error(404)
-        try:
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
-            out = fn(body)
-            if self.path == "/api/sync":
-                print(f"☁️  已寫入 {out['sheet']} {out['date']}，{out['count']} 位同學")
-        except UserError as e:
-            print(f"❌ {e}")
-            out = {"ok": False, "error": str(e)}
-        except Exception as e:
-            traceback.print_exc()
-            out = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-        data = json.dumps(out, ensure_ascii=False).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def log_message(self, *a):
-        pass
-
-
-def main():
-    load_env()
+def status():
+    """啟動時顯示用：只檢查設定是否齊全，不實際連線。"""
+    key = ROOT / (env("GOOGLE_SERVICE_ACCOUNT_FILE") or "service-account.json")
+    if not env("GOOGLE_SHEET_ID"):
+        return False, ".env 沒有 GOOGLE_SHEET_ID"
+    if not key.exists():
+        return False, f"找不到 {key.name}"
     try:
-        srv = HTTPServer(("127.0.0.1", PORT), Handler)
-    except OSError:
-        print(f"伺服器已經在跑了，直接打開 {URL}")
-        webbrowser.open(URL)
-        return
-    print(f"🏫 課堂積分教室：{URL}\n   上課期間請不要關閉這個視窗；下課後關掉視窗或按 Ctrl+C 就會停止。")
-    if "--no-open" not in sys.argv:
-        webbrowser.open(URL)
-    try:
-        srv.serve_forever()
-    except KeyboardInterrupt:
-        print("\n👋 已停止")
-
-
-if __name__ == "__main__":
-    main()
+        import gspread  # noqa: F401
+    except ImportError:
+        return False, "缺少套件，請先 source venv/bin/activate 再 pip install -r requirements.txt"
+    return True, json.loads(key.read_text()).get("client_email", key.name)

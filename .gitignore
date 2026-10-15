@@ -10,8 +10,6 @@ images/
 # 貼到 Google 試算表用的 Apps Script（不在本機執行）
 google-apps-script/
 
-# Python 相依套件清單與快取
-requirements.txt
 __pycache__/
 *.pyc
 .venv/
@@ -28,4 +26,3 @@ venv/
 
 # 學生名單（含真實姓名，只留在本機）
 rosters/
-rosters.js
