@@ -38,7 +38,7 @@ python3 main.py
 | `python3 main.py` | 辨識新照片 → 啟動網頁 |
 | `python3 main.py --port 8080` | 換 port 啟動 |
 | `python3 main.py --no-open` | 啟動但不自動開瀏覽器 |
-| `python3 main.py import` | 只辨識 `images/` 裡的新照片 |
+| `python3 main.py import` | 只辨識 `images/` 裡新增或換過的照片 |
 | `python3 main.py import --force` | 全部照片重新辨識（會覆蓋手動改過的 json） |
 | `python3 main.py check` | 檢查設定（班級、Google Sheet、API 金鑰） |
 
@@ -56,7 +56,9 @@ GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json
 
 1. 把座位表照片放進 `images/`，**檔名 = 班級名稱**（例如 `907.HEIC`、`801.jpg`）
 2. 執行 `python3 main.py`（或 `python3 main.py import`）
-3. 重新整理網頁，左上角選單就會出現新班級
+3. 網頁左上角選單就會出現新班級
+
+程式執行期間也可以直接把照片放進 `images/`，或替換某班的照片（檔名不變），幾秒內就會自動辨識，網頁也會自動更新。
 
 照片只會辨識一次（已經有 `rosters/<班級>.json` 的不會重跑），每張照片會產生一點 API 費用。
 

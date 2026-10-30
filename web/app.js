@@ -441,15 +441,34 @@ setInterval(() => {
   $("sTime").textContent = s >= 3600 ? `${Math.floor(s/3600)}:${pad(Math.floor(s/60)%60)}` : `${pad(Math.floor(s/60))}:${pad(s%60)}`;
 }, 1000);
 
+const fillClassSel = () =>
+  $("classSel").innerHTML = CLASSES.map(c => `<option value="${esc(c.id)}">${esc(c.className)} 班</option>`).join("");
+
 (async function init(){
   try{ CLASSES = await (await fetch("/api/classes")).json(); }
   catch(e){ CLASSES = []; }
-  $("classSel").innerHTML = CLASSES.map(c => `<option value="${esc(c.id)}">${esc(c.className)} 班</option>`).join("");
+  fillClassSel();
   if (!CLASSES.length){
     document.querySelector("main").innerHTML = `<div class="card" style="margin:40px auto;max-width:520px;text-align:center">
-      <h3 style="justify-content:center">還沒有任何班級 📷</h3><p>把座位表照片放進 <code>images/</code>，再執行 <code>python3 main.py import</code>。</p></div>`;
+      <h3 style="justify-content:center">還沒有任何班級 📷</h3><p>把座位表照片放進 <code>images/</code>，辨識完成後重新整理這個頁面。</p></div>`;
     return;
   }
   const last = store.get("classroom:last");
   loadClass(CLASSES.some(c => c.id === last) ? last : CLASSES[0].id);
 })();
+
+/* 照片辨識完成（新班級或換照片）時自動帶入，不用重新整理 */
+setInterval(async () => {
+  if (!cls || document.hidden) return;
+  let next;
+  try{ next = await (await fetch("/api/classes")).json(); }catch(e){ return; }
+  if (JSON.stringify(next) === JSON.stringify(CLASSES)) return;
+  const old = new Map(CLASSES.map(c => [c.id, sig(c)]));
+  CLASSES = next;
+  fillClassSel();
+  const cur = CLASSES.find(c => c.id === cls.id);
+  if (cur && old.get(cur.id) !== sig(cur)){ loadClass(cur.id); toast(`${cur.className} 班座位表已更新`); }
+  else if (cur){ cls = cur; $("classSel").value = cls.id; }
+  const added = CLASSES.filter(c => !old.has(c.id));
+  if (added.length) toast(`新增班級：${added.map(c => c.className).join("、")}`);
+}, 5000);

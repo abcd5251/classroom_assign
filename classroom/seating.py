@@ -1,5 +1,6 @@
 """座位表照片 → rosters/<檔名>.json（用 Claude 辨識，需要 .env 的 ANTHROPIC_API_KEY）。"""
 import base64
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -76,13 +77,41 @@ def extract(client, path: Path) -> dict:
     return json.loads(text)
 
 
+def photo_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def photos():
+    return sorted(p for p in IMAGES.glob("*") if p.suffix.lower() in EXTS)
+
+
+def is_stale(p: Path) -> bool:
+    """照片還沒辨識過，或照片換過（內容和上次辨識時不同）。"""
+    j = ROSTERS / f"{p.stem}.json"
+    if not j.exists():
+        return True
+    old = json.loads(j.read_text(encoding="utf-8")).get("sourceHash")
+    if old:
+        return old != photo_hash(p)
+    return p.stat().st_mtime > j.stat().st_mtime   # 舊版 json 沒記雜湊，就看照片是不是比較新
+
+
 def pending(force=False):
-    """還沒有名單的照片（force=True 則全部）。"""
-    photos = sorted(p for p in IMAGES.glob("*") if p.suffix.lower() in EXTS)
-    return [p for p in photos if force or not (ROSTERS / f"{p.stem}.json").exists()]
+    """需要辨識的照片：新照片或換過的照片（force=True 則全部）。"""
+    return [p for p in photos() if force or is_stale(p)]
+
+
+def duplicates():
+    """內容完全相同的照片，例如 [["904.HEIC", "910.HEIC"]]。"""
+    groups = {}
+    for p in photos():
+        groups.setdefault(photo_hash(p), []).append(p.name)
+    return [g for g in groups.values() if len(g) > 1]
 
 
 def import_photos(force=False):
+    for g in duplicates():
+        print(f"⚠️  {'、'.join(g)} 是同一張照片，這幾班的名單會一模一樣，請換成正確的座位表")
     todo = pending(force)
     if not todo:
         print("沒有新的座位表照片（用 --force 可重新辨識全部）")
@@ -104,10 +133,37 @@ def import_photos(force=False):
             print(f"  ❌ {p.name} 失敗：{e}")
             continue
         d = {"id": p.stem, "className": p.stem, "rows": d["rows"], "cols": d["cols"],
-             "source": f"images/{p.name}", "seats": sorted(d["seats"], key=lambda s: (s["row"], s["col"]))}
+             "source": f"images/{p.name}", "sourceHash": photo_hash(p), "seats": sorted(d["seats"], key=lambda s: (s["row"], s["col"]))}
         for msg in rosters.problems(d):
             print(f"  ⚠️  {msg}，請手動檢查 rosters/{p.stem}.json")
         rosters.save(d)
         print(f"  ✓ {len(d['seats'])} 位學生 → rosters/{p.stem}.json")
         done += 1
     return done
+
+
+def watch(interval=3):
+    """伺服器執行中持續檢查 images/：放入新照片或換照片就自動辨識。"""
+    import threading
+    import time
+
+    failed = {}   # 辨識失敗的照片 → 當時的雜湊，照片沒換就不重試
+
+    def loop():
+        while True:
+            time.sleep(interval)
+            try:
+                todo = [p for p in pending()
+                        if time.time() - p.stat().st_mtime > interval   # 等檔案複製完
+                        and failed.get(p.name) != photo_hash(p)]
+                if not todo:
+                    continue
+                import_photos()
+                for p in todo:
+                    if is_stale(p):
+                        failed[p.name] = photo_hash(p)
+                print("   重新整理網頁或切換班級即可看到更新", flush=True)
+            except Exception as e:
+                print(f"❌ 自動辨識出錯：{e}", flush=True)
+
+    threading.Thread(target=loop, daemon=True).start()

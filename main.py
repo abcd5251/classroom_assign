@@ -23,6 +23,8 @@ def show_status(url=None):
     if url:
         print(f"   網址          {url}")
     print(f"   班級          " + ("、".join(f"{c['className']}（{len(c['seats'])} 人）" for c in classes) or "還沒有，請把座位表照片放進 images/"))
+    for g in seating.duplicates():
+        print(f"   ⚠️  {'、'.join(g)} 是同一張照片，請換成正確的座位表")
     for c in classes:
         for msg in rosters.problems(c):
             print(f"   ⚠️  {c['className']}：{msg}")
@@ -39,7 +41,9 @@ def start(port, open_browser):
         sys.exit(f"❌ port {port} 已被使用（可能已經開過了），請直接打開 http://127.0.0.1:{port}/ 或改用 --port")
     url = f"http://127.0.0.1:{port}/"
     show_status(url)
-    print("\n   上課期間請不要關閉這個視窗；按 Ctrl+C 停止。\n", flush=True)
+    print("\n   上課期間請不要關閉這個視窗；按 Ctrl+C 停止。")
+    print("   放入或替換 images/ 裡的照片會自動辨識。\n", flush=True)
+    seating.watch()
     if open_browser:
         webbrowser.open(url)
     try:
