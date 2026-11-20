@@ -51,88 +51,118 @@ def get_ws(sh, title, head, frozen_cols=0):
         return ws, True
 
 
-def write_log(sh, p):
-    """把這堂課有加扣分的學生寫進隱藏的紀錄分頁；同一堂課（課堂ID）重複上傳會先刪掉舊的。回傳所有紀錄列。"""
-    ws, new = get_ws(sh, LOG_SHEET, LOG_HEAD)
-    if new:
-        ws.hide()
-    sid = str(p["sessionId"])
-    rows = [r for r in ws.get_all_values()[1:] if r[3] != sid]
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    for s in p["students"]:
-        if not s.get("plusN") and not s.get("minusN"):
+# ── 安全原則 ──────────────────────────────────────────────────────────────
+# 1. 紀錄分頁只「往下新增」，從不清除或改寫舊紀錄。同一堂課重複上傳時，以最後一次上傳為準。
+# 2. 班級分頁不排序、不刪列、不改別人的格式；新日期欄只開在整欄都空白的地方。
+# 3. 分數格只有在「目前內容 = 這個程式上次寫的內容」（或原本是空的）時才會更新；
+#    老師手動改過、或不是這個程式寫的格子一律跳過，並回報給老師。
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _no(v):
+    try:
+        return int(float(str(v).strip()))
+    except ValueError:
+        return None
+
+
+def _col(r, i):
+    return r[i] if i < len(r) else ""
+
+
+def _latest(log_rows):
+    """每堂課（課堂ID）只取最後一次上傳的那批紀錄。"""
+    last = {}
+    for r in log_rows:
+        last[_col(r, 3)] = max(last.get(_col(r, 3), ""), _col(r, 0))
+    return [r for r in log_rows if _col(r, 0) == last[_col(r, 3)]]
+
+
+def day_sums(log_rows, cls, date):
+    """某班某天每位同學的淨分與明細（同一天上兩堂課會相加）。"""
+    sums = {}
+    for r in _latest(log_rows):
+        n = _no(_col(r, 4))
+        if _col(r, 1) != cls or _col(r, 2) != date or n is None:
             continue
-        rows.append([now, str(p["className"]), str(p["date"]), sid, s["no"], s["name"], s.get("role") or "",
-                     STATUS.get(s.get("status"), ""), s["plus"], s["minus"], s["net"],
-                     "、".join(s.get("plusR") or []), "、".join(s.get("minusR") or [])])
-    ws.batch_clear(["A2:M"])
-    if len(rows) + 1 > ws.row_count:
-        ws.add_rows(len(rows) + 1 - ws.row_count + 50)
-    if rows:
-        ws.update(rows, "A2")
-    return rows
+        x = sums.setdefault(n, {"net": 0, "notes": []})
+        x["net"] += _no(_col(r, 10)) or 0
+        detail = "、".join(t for t in (_col(r, 11), _col(r, 12)) if t)
+        if detail:
+            x["notes"].append(detail)
+    return {n: {"net": x["net"], "note": "\n".join(x["notes"])} for n, x in sums.items()}
 
 
-def rebuild_day(sh, cls, date, roster, log_rows):
-    """依紀錄重新計算班級分頁中這一天那一欄的分數（同一天上兩堂課會相加）。"""
+def _same(value, note, x):
+    """格子的內容是不是剛好等於 x（None 代表空白格）。"""
+    if x is None:
+        return not str(value).strip() and not str(note).strip()
+    return _no(value) == x["net"] and str(note).strip() == x["note"].strip()
+
+
+def write_day(sh, ws, date, roster, before, after, create):
+    """更新班級分頁中 date 那欄。回傳因為內容被手動改過而跳過的同學。"""
     from gspread.utils import rowcol_to_a1
-    ws, _ = get_ws(sh, cls, ["座號", "姓名"], frozen_cols=2)
-    values = ws.get_all_values()
-    header = values[0] if values else ["座號", "姓名"]
-    while len(header) > 2 and not header[-1]:
-        header.pop()
+    values = ws.get_all_values() or [["座號", "姓名"]]
+    width = max(len(r) for r in values)
+    header = values[0] + [""] * (width - len(values[0]))
 
-    # 找到（或新增）日期欄
     if date in header:
         col = header.index(date) + 1
+    elif not create:
+        return []   # 舊日期欄已經不在了，就不動
     else:
-        col = len(header) + 1
+        # 新日期欄：放在最後一個有表頭的欄之後、第一個「整欄都空白」的欄
+        used = max(i for i, h in enumerate(header) if h.strip()) + 1 if any(h.strip() for h in header) else 0
+        col = next((j + 1 for j in range(used, width) if not any(_col(r, j).strip() for r in values)), width + 1)
         if col > ws.col_count:
             ws.add_cols(col - ws.col_count + 10)
         ws.update([[date]], rowcol_to_a1(1, col))
-    ws.format(f"A1:{rowcol_to_a1(1, col)}", {"textFormat": {"bold": True}, "backgroundColor": HEADER_BG,
-                                            "horizontalAlignment": "CENTER"})
+        ws.format(rowcol_to_a1(1, col), {"textFormat": {"bold": True}, "backgroundColor": HEADER_BG,
+                                          "horizontalAlignment": "CENTER"})
 
-    # 確保名單上每位學生都有一列，並依座號排序
-    last = len(values) if values else 1
-    known = {int(float(r[0])) for r in values[1:] if r and r[0].strip()}
-    add = [[s["no"], s["name"]] for s in roster if int(s["no"]) not in known]
+    # 名單上還沒有的同學：加在表格最下面（不排序，不移動既有的列）
+    rows = {}
+    for i, r in enumerate(values[1:], start=2):
+        n = _no(_col(r, 0))
+        if n is not None:
+            rows.setdefault(n, i)
+    add = [[s["no"], s["name"]] for s in roster if _no(s["no"]) not in rows]
     if add:
-        if last + len(add) > ws.row_count:
-            ws.add_rows(last + len(add) - ws.row_count + 20)
-        ws.update(add, f"A{last + 1}")
-        last += len(add)
-    if last < 2:
-        return 0
-    ws.sort((1, "asc"), range=f"A2:{rowcol_to_a1(last, ws.col_count)}")
+        first = len(values) + 1
+        if first + len(add) - 1 > ws.row_count:
+            ws.add_rows(first + len(add) - 1 - ws.row_count + 20)
+        ws.update(add, f"A{first}")
+        for k, (n, _) in enumerate(add):
+            rows[_no(n)] = first + k
 
-    sums = {}
-    for r in log_rows:
-        if str(r[1]) != cls or str(r[2]) != date:
+    notes = ws.get_notes()
+    reqs, skipped = [], []
+    for n in sorted(set(before) | set(after)):
+        if n not in rows:
             continue
-        x = sums.setdefault(int(float(r[4])), {"net": 0, "notes": []})
-        x["net"] += int(float(r[10]))
-        detail = "、".join(t for t in (r[11], r[12]) if t)
-        if detail:
-            x["notes"].append(detail)
-
-    def cell(no):
-        x = sums.get(no)
-        color = BLACK if not x else GREEN if x["net"] > 0 else RED if x["net"] < 0 else BLACK
-        c = {"note": "\n".join(x["notes"]) if x else "",
+        had, want = before.get(n), after.get(n)
+        i = rows[n]
+        value = _col(values[i - 1], col - 1) if i <= len(values) else ""
+        note = _col(notes[i - 1], col - 1) if i <= len(notes) else ""
+        if _same(value, note, want) or had == want:
+            continue                       # 已經是對的，或這次上傳沒改到他
+        if not _same(value, note, had):
+            skipped.append(n)              # 有人手動改過 → 不覆蓋
+            continue
+        color = BLACK if not want else GREEN if want["net"] > 0 else RED if want["net"] < 0 else BLACK
+        c = {"note": want["note"] if want else "",
              "userEnteredFormat": {"textFormat": {"bold": True, "foregroundColor": color}, "horizontalAlignment": "CENTER"}}
-        if x:
-            c["userEnteredValue"] = {"numberValue": x["net"]}
-        return c
-
-    nos = [int(float(v)) for v in ws.col_values(1)[1:last] if str(v).strip()]
-    sh.batch_update({"requests": [{"updateCells": {
-        "start": {"sheetId": ws.id, "rowIndex": 1, "columnIndex": col - 1},
-        "rows": [{"values": [cell(n)]} for n in nos],
-        "fields": "userEnteredValue,note,userEnteredFormat(textFormat,horizontalAlignment)",
-    }}]})
-    ws.columns_auto_resize(0, 2)
-    return len(sums)
+        if want:
+            c["userEnteredValue"] = {"numberValue": want["net"]}
+        reqs.append({"updateCells": {
+            "start": {"sheetId": ws.id, "rowIndex": i - 1, "columnIndex": col - 1},
+            "rows": [{"values": [c]}],
+            "fields": "userEnteredValue,note,userEnteredFormat(textFormat,horizontalAlignment)",
+        }})
+    if reqs:
+        sh.batch_update({"requests": reqs})
+    return skipped
 
 
 def ping():
@@ -142,10 +172,38 @@ def ping():
 
 def sync(p):
     sh = book()
-    cls, date = str(p["className"]), str(p["date"])
-    log_rows = write_log(sh, p)
-    count = rebuild_day(sh, cls, date, p["students"], log_rows)
-    return {"ok": True, "sheet": cls, "date": date, "count": count, "url": f"{sh.url}#gid={sh.worksheet(cls).id}"}
+    cls, date, sid = str(p["className"]), str(p["date"]), str(p["sessionId"])
+    log_ws, new = get_ws(sh, LOG_SHEET, LOG_HEAD)
+    if new:
+        log_ws.hide()
+    log_rows = log_ws.get_all_values()[1:]
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    batch = [[now, cls, date, sid, s["no"], s["name"], s.get("role") or "",
+              STATUS.get(s.get("status"), ""), s["plus"], s["minus"], s["net"],
+              "、".join(s.get("plusR") or []), "、".join(s.get("minusR") or [])]
+             for s in p["students"] if s.get("plusN") or s.get("minusN")]
+    if not batch:   # 標記「這堂課最新一次上傳沒有任何加扣分」
+        batch = [[now, cls, date, sid, "", "（這次上傳沒有加扣分）"] + [""] * 7]
+    after = log_rows + batch
+
+    # 這堂課之前若用別的日期上傳過，那一欄也要一起更新（只改這個程式寫過、沒被手動改過的格子）
+    old_dates = {_col(r, 2) for r in _latest(log_rows) if _col(r, 3) == sid and _col(r, 1) == cls} - {date}
+    ws, created = get_ws(sh, cls, ["座號", "姓名"], frozen_cols=2)
+    roster = {_no(s["no"]): s["name"] for s in p["students"]}
+    skipped = []
+    for d in [date, *sorted(old_dates)]:
+        skipped += [f"{d} {n:02d} {roster.get(n, '')}"
+                    for n in write_day(sh, ws, d, p["students"] if d == date else [],
+                                       day_sums(log_rows, cls, d), day_sums(after, cls, d), create=(d == date))]
+    if created:
+        ws.columns_auto_resize(0, 2)
+
+    # 分數格寫完才記錄（中途失敗的話，重新上傳一次即可，不會重複加分）
+    log_ws.append_rows(batch, value_input_option="RAW", insert_data_option="INSERT_ROWS", table_range="A1")
+    count = len(day_sums(after, cls, date))
+    return {"ok": True, "sheet": cls, "date": date, "count": count, "skipped": skipped,
+            "url": f"{sh.url}#gid={ws.id}"}
 
 
 def status():

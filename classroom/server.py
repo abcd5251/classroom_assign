@@ -29,6 +29,8 @@ class Handler(SimpleHTTPRequestHandler):
             elif self.path == "/api/sync":
                 out = sheets.sync(body)
                 print(f"☁️  已寫入 Google Sheet：{out['sheet']} 班 {out['date']}，{out['count']} 位同學", flush=True)
+                if out["skipped"]:
+                    print(f"   ⚠️  已有其他內容、沒有覆蓋：{'、'.join(out['skipped'])}", flush=True)
             else:
                 return self.send_error(404)
         except sheets.UserError as e:

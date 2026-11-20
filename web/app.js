@@ -33,6 +33,9 @@ function loadClass(id){
     Object.assign(state, { rows: cls.rows, cols: cls.cols, seats: cls.seats.map(s => ({...s})), sig: sig(cls) });
   }
   state.sessionId = state.sessionId || newSessionId();
+  if (!state.events.length && new Date(state.startedAt).toDateString() !== new Date().toDateString()){
+    state.startedAt = Date.now(); state.sessionId = newSessionId(); state.syncedSig = null;   // 空的舊課堂 → 今天重新開始
+  }
   selected = null;
   $("classSel").value = cls.id;
   store.set("classroom:last", cls.id);
@@ -320,7 +323,9 @@ function exportCSV(){
 
 /* ---------- 上傳到 Google Sheet ---------- */
 const eventsSig = () => state.events.length + ":" + (state.events.at(-1)?.t || 0);
-const sessionDate = () => { const d = new Date(state.startedAt); return { md: `${d.getMonth()+1}/${d.getDate()}`, iso: `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}` }; };
+// 上課日期 = 這堂課第一筆加扣分／點名的日期（沒有紀錄就用今天），不用 startedAt：
+// 上傳後按「開始新課堂」會把 startedAt 設成當天，下次上課若沒再按，就會被誤寫進舊日期那欄。
+const sessionDate = () => { const d = new Date(state.events.length ? Math.min(...state.events.map(e => e.t)) : Date.now()); return { md: `${d.getMonth()+1}/${d.getDate()}`, iso: `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}` }; };
 
 async function post(body){
   const res = await fetch("/api/" + body.action, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -338,13 +343,15 @@ async function syncSheet(){
   });
   const active = students.filter(s => s.plusN || s.minusN).length;
   const { md, iso } = sessionDate();
-  if (!confirm(`上傳到 Google Sheet？\n\n分頁：${state.className}\n日期：${md}\n有加扣分的同學：${active} 位\n\n（同一堂課重複上傳只會更新，不會重複加分）`)) return;
+  if (!confirm(`上傳到 Google Sheet？\n\n分頁：${state.className}\n日期：${md}\n有加扣分的同學：${active} 位\n\n（同一堂課重複上傳只會更新，不會重複加分；試算表裡手動輸入的內容不會被覆蓋）`)) return;
   const btn = $("syncBtn"); btn.disabled = true; btn.textContent = "⏳ 上傳中…";
   try{
     const r = await post({ action: "sync", className: state.className, date: md, isoDate: iso, sessionId: state.sessionId, students });
     state.syncedSig = eventsSig(); save();
     tone([523,659,784,1047], "triangle", .16, .08);
     toast(`☁️ 已寫入「${r.sheet}」分頁 ${r.date}，共 ${r.count} 位同學`);
+    if (r.skipped && r.skipped.length)
+      alert(`以下格子在試算表裡已經有其他內容（可能是手動輸入的），為了不覆蓋，這次沒有寫入，請自行確認：\n\n${r.skipped.join("\n")}`);
     if (confirm("上傳完成！要開始新課堂（清空這堂課的分數）嗎？\n\n選「取消」可以繼續上這堂課，之後再上傳會更新同一欄。")){
       state.events = []; state.startedAt = Date.now(); state.sessionId = newSessionId(); state.syncedSig = null;
       selected = null; save();
